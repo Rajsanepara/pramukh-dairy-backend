@@ -36,9 +36,14 @@ app.use(express.json());
 app.use(morgan('dev'));
 
 // Health check
+app.get("/", (req, res) => {
+  res.send("Pramukh Dairy Backend Running");
+});
+
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', message: 'Pramukh Dairy API running' });
 });
+
 
 // Routes
 app.use('/api/auth', authRoutes);
