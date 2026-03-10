@@ -1,4 +1,5 @@
 import MilkEntry from '../models/MilkEntry.js';
+import Client from '../models/Client.js';
 
 const getMonthRange = (year, month) => {
   const start = new Date(year, month - 1, 1);
@@ -19,6 +20,7 @@ export const getMonthlySummary = async (req, res) => {
   const yearNum = Number(year);
   const { start, end } = getMonthRange(yearNum, monthNum);
 
+  // Aggregate total milk and active days (for averages)
   const summary = await MilkEntry.aggregate([
     {
       $match: {
@@ -55,12 +57,53 @@ export const getMonthlySummary = async (req, res) => {
   const totalEvening = totals.totalEvening || 0;
   const totalMilk = totalMorning + totalEvening;
   const daysCount = totals.daysCount || 1;
-  const pricePerLiter = 80;
-  const totalRevenue = totalMilk * pricePerLiter;
 
   const avgMorningPerDay = totalMorning / daysCount;
   const avgEveningPerDay = totalEvening / daysCount;
   const avgTotalPerDay = totalMilk / daysCount;
+
+  // Compute total revenue using each customer's price
+  const perClient = await MilkEntry.aggregate([
+    {
+      $match: {
+        date: { $gte: start, $lte: end }
+      }
+    },
+    {
+      $group: {
+        _id: '$client',
+        totalMilk: {
+          $sum: {
+            $add: ['$morning', '$evening']
+          }
+        }
+      }
+    }
+  ]);
+
+  let totalRevenue = 0;
+
+  if (perClient.length > 0) {
+    const clientIds = perClient.map((c) => c._id);
+    const clients = await Client.find(
+      { _id: { $in: clientIds } },
+      { ratePerLiter: 1 }
+    ).lean();
+
+    const rateMap = new Map();
+    clients.forEach((c) => {
+      rateMap.set(String(c._id), c.ratePerLiter || 80);
+    });
+
+    perClient.forEach((c) => {
+      const rate = rateMap.get(String(c._id)) ?? 80;
+      const clientTotalMilk = c.totalMilk || 0;
+      totalRevenue += clientTotalMilk * rate;
+    });
+  }
+
+  const pricePerLiter =
+    totalMilk > 0 ? totalRevenue / totalMilk : 0;
 
   res.json({
     month: monthNum,
@@ -76,4 +119,3 @@ export const getMonthlySummary = async (req, res) => {
     totalRevenue
   });
 };
-

@@ -7,6 +7,14 @@ const normalizeDate = (dateStr) => {
   return d;
 };
 
+const getMonthRange = (year, month) => {
+  const start = new Date(year, month - 1, 1);
+  start.setHours(0, 0, 0, 0);
+  const end = new Date(year, month, 0);
+  end.setHours(23, 59, 59, 999);
+  return { start, end };
+};
+
 // Get milk entries for a given date, along with all clients
 export const getDailyMilk = async (req, res) => {
   const { date } = req.query;
@@ -65,5 +73,72 @@ export const upsertMilkEntry = async (req, res) => {
   );
 
   res.json(entry);
+};
+
+// Get full month milk entries for a single client (customer-wise monthly editing)
+export const getClientMonthlyMilk = async (req, res) => {
+  const { clientId } = req.params;
+  const { month, year } = req.query;
+
+  if (!clientId || !month || !year) {
+    return res
+      .status(400)
+      .json({ message: 'clientId, month and year are required' });
+  }
+
+  const monthNum = Number(month);
+  const yearNum = Number(year);
+  const { start, end } = getMonthRange(yearNum, monthNum);
+
+  const client = await Client.findById(clientId).lean();
+  if (!client) {
+    return res.status(404).json({ message: 'Client not found' });
+  }
+
+  const entries = await MilkEntry.find({
+    client: clientId,
+    date: { $gte: start, $lte: end }
+  })
+    .sort({ date: 1 })
+    .lean();
+
+  const entryByDay = new Map();
+  entries.forEach((e) => {
+    const d = new Date(e.date);
+    const dayOfMonth = d.getDate();
+    entryByDay.set(dayOfMonth, e);
+  });
+
+  const daysInMonth = new Date(yearNum, monthNum, 0).getDate();
+  const days = [];
+
+  for (let day = 1; day <= daysInMonth; day += 1) {
+    const entry = entryByDay.get(day);
+    const morning = entry?.morning || 0;
+    const evening = entry?.evening || 0;
+    const mm = String(monthNum).padStart(2, '0');
+    const dd = String(day).padStart(2, '0');
+    const dateStr = `${yearNum}-${mm}-${dd}`;
+
+    days.push({
+      day,
+      date: dateStr,
+      morning,
+      evening,
+      total: morning + evening
+    });
+  }
+
+  res.json({
+    client: {
+      id: client._id,
+      name: client.name,
+      phone: client.phone,
+      isActive: client.isActive
+    },
+    month: monthNum,
+    year: yearNum,
+    days
+  });
 };
 
